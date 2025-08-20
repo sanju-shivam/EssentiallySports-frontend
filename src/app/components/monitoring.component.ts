@@ -1,7 +1,23 @@
 import { Component, OnInit } from '@angular/core';
 import { ApiService } from '../services/api.service';
-import { SystemHealth } from '../models/compliance.model';
 import { CommonModule } from '@angular/common';
+
+interface SystemHealth {
+  overall_status: string;
+  issues: {
+    type: string;
+    feed: string;
+    success_rate: number;
+    message: string;
+  }[];
+  metrics: {
+    [feed: string]: {
+      total_attempts: number;
+      successful_attempts: number;
+      success_rate: number;
+    };
+  };
+}
 
 @Component({
   selector: 'app-monitoring',
@@ -14,39 +30,42 @@ import { CommonModule } from '@angular/common';
         <button (click)="refreshHealth()" class="btn-primary">Refresh</button>
       </div>
 
+      <!-- Overall Status -->
       <div *ngIf="systemHealth" class="health-overview">
         <div class="overall-status" [class]="'status-' + systemHealth.overall_status">
-          <h3>Overall System Status: 
-          {{ systemHealth.overall_status.toUpperCase() }}
-           </h3>
-        </div>
-
-        <div class="components-grid">
-          <div *ngFor="let component of getComponentsArray()" class="component-card">
-            <div class="component-header">
-              <h4>{{ component.name }}</h4>
-              <span [class]="'status-badge status-' + component.data.status">
-                {{ component.data.status.toUpperCase() }}
-              </span>
-            </div>
-            
-            <p class="component-message">{{ component.data.message }}</p>
-            
-            <div class="component-meta">
-              <small>Last Check: {{ component.data.last_check | date:'medium' }}</small>
-            </div>
-          </div>
+          <h3>Overall System Status: {{ systemHealth.overall_status.toUpperCase() }}</h3>
         </div>
       </div>
 
-      <!-- System Alerts -->
+      <!-- System Issues -->
       <div class="alerts-section">
         <h3>System Alerts & Recommendations</h3>
         <div *ngIf="getSystemAlerts().length === 0" class="no-alerts">
           All systems operating normally
         </div>
-        <div *ngFor="let alert of getSystemAlerts()" class="alert" [class]="'alert-' + alert.severity">
-          <strong>{{ alert.component }}:</strong> {{ alert.message }}
+        <div *ngFor="let alert of getSystemAlerts()" class="alert" [class]="'alert-' + getSeverity(alert)">
+          <strong>{{ alert.feed }}:</strong> {{ alert.message }}
+          <div><small>Success Rate: {{ alert.success_rate }}%</small></div>
+        </div>
+      </div>
+
+      <!-- Feed Metrics -->
+      <div class="metrics-section" *ngIf="systemHealth?.metrics">
+        <h3>Feed Metrics</h3>
+        <div class="components-grid">
+          <div *ngFor="let metric of getMetricsArray()" class="component-card">
+            <div class="component-header">
+              <h4>{{ metric.feed }}</h4>
+              <span class="status-badge" [class]="'status-' + getMetricStatus(metric)">
+                {{ getMetricStatus(metric).toUpperCase() }}
+              </span>
+            </div>
+            <p class="component-message">
+              Total Attempts: {{ metric?.data?.total_attempts }} <br />
+              Successful Attempts: {{ metric?.data?.successful_attempts }} <br />
+              Success Rate: {{ metric?.data?.success_rate }}%
+            </p>
+          </div>
         </div>
       </div>
 
@@ -116,7 +135,7 @@ import { CommonModule } from '@angular/common';
   `]
 })
 export class MonitoringComponent implements OnInit {
-  systemHealth: SystemHealth | null = null;
+  systemHealth: any;
   loading = false;
   error = '';
 
@@ -124,16 +143,16 @@ export class MonitoringComponent implements OnInit {
 
   ngOnInit() {
     this.refreshHealth();
-    // Auto-refresh every 30 seconds
     setInterval(() => this.refreshHealth(), 30000);
   }
 
   refreshHealth() {
     this.loading = true;
     this.apiService.getSystemHealth().subscribe({
-      next: (health) => {
+      next: (health:any) => {
         this.systemHealth = health;
         this.loading = false;
+        this.getMetricsArray()
       },
       error: (err) => {
         this.error = 'Failed to load system health';
@@ -143,30 +162,42 @@ export class MonitoringComponent implements OnInit {
     });
   }
 
-  getComponentsArray() {
-    if (!this.systemHealth) return [];
-    return Object.entries(this.systemHealth.components).map(([name, data]) => ({ name, data }));
-  }
-
   getSystemAlerts() {
-    if (!this.systemHealth) return [];
-    
-    return Object.entries(this.systemHealth.components)
-      .filter(([_, data]) => data.status !== 'healthy')
-      .map(([name, data]) => ({
-        component: name,
-        message: data.message,
-        severity: data.status
-      }));
+    return this.systemHealth?.issues ?? [];
   }
 
+  // getMetricsArray() {
+  //   if (!this.systemHealth?.metrics) return [];
+  //   return Object.entries(this.systemHealth.metrics).map(([feed, data]) => ({ feed, data }));
+  // }
+
+  getMetricsArray(): { feed: string; data: { total_attempts: number; successful_attempts: number; success_rate: number } }[] {
+    if (!this.systemHealth?.metrics) return [];
+    return Object.entries(this.systemHealth.metrics).map(([feed, data]) => ({
+      feed,
+      data: data as { total_attempts: number; successful_attempts: number; success_rate: number }
+    }));
+  }
+  
+
+  getSeverity(issue: any): string {
+    if (issue.success_rate < 50) return 'critical';
+    if (issue.success_rate < 80) return 'warning';
+    return 'healthy';
+  }
+
+  getMetricStatus(metric: any): string {
+    if (metric.data.success_rate < 50) return 'critical';
+    if (metric.data.success_rate < 80) return 'warning';
+    return 'healthy';
+  }
+
+  // Demo mock values
   getAverageCheckTime(): string {
-    // Mock data - in real implementation, this would come from the backend
     return (Math.random() * 100 + 50).toFixed(0);
   }
 
   getSystemUptime(): string {
-    // Mock data - in real implementation, this would come from the backend
     const hours = Math.floor(Math.random() * 720 + 1);
     const days = Math.floor(hours / 24);
     const remainingHours = hours % 24;
@@ -174,7 +205,6 @@ export class MonitoringComponent implements OnInit {
   }
 
   getActiveRulesCount(): number {
-    // This would be provided by the backend in a real implementation
     return Math.floor(Math.random() * 20 + 5);
   }
 
